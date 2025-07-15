@@ -32,6 +32,12 @@ interface RichTextEditorProps {
 
 export function RichTextEditor({ content, onChange, placeholder }: RichTextEditorProps) {
   const editor = useEditor({
+    // Prevent rendering during SSR
+    editorProps: {
+      attributes: {
+        class: "prose prose-sm sm:prose lg:prose-lg xl:prose-2xl mx-auto focus:outline-none min-h-[300px] p-4",
+      },
+    },
     extensions: [
       StarterKit,
       Image.configure({
@@ -50,11 +56,12 @@ export function RichTextEditor({ content, onChange, placeholder }: RichTextEdito
     onUpdate: ({ editor }) => {
       onChange(editor.getHTML())
     },
-    editorProps: {
-      attributes: {
-        class: "prose prose-sm sm:prose lg:prose-lg xl:prose-2xl mx-auto focus:outline-none min-h-[300px] p-4",
-      },
-    },
+    // 🚨 This is the fix!
+    autofocus: false,
+    injectCSS: true,
+    editable: true,
+    // ✅ This prevents hydration mismatch errors
+    immediatelyRender: false,
   })
 
   const addImage = useCallback(() => {
