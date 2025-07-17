@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { PenTool, Eye, Trash2 } from "lucide-react"
 import Link from "next/link"
 import { formatDistanceToNow } from "date-fns"
+import { toast } from "sonner"
 
 const statusColors = {
   draft: "secondary",
@@ -49,6 +50,7 @@ export default function ArticlesPage() {
       setArticles(data || [])
     } catch (error) {
       console.error("Error fetching articles:", error)
+      toast.error("Failed to load your articles.")
     } finally {
       setLoading(false)
     }
@@ -62,14 +64,25 @@ export default function ArticlesPage() {
 
       if (error) throw error
 
+      // Log activity
+      await supabase.rpc("log_activity", {
+        p_user_id: profile?.id,
+        p_action: "article_deleted",
+        p_resource_type: "article",
+        p_resource_id: id,
+        p_details: { article_id: id },
+      })
+
       setArticles((prev) => prev.filter((article) => article.id !== id))
+      toast.success("Article deleted successfully!")
     } catch (error) {
       console.error("Error deleting article:", error)
+      toast.error("Failed to delete article.")
     }
   }
 
   if (loading) {
-    return <div>Loading...</div>
+    return <div>Loading articles...</div>
   }
 
   return (
@@ -131,12 +144,14 @@ export default function ArticlesPage() {
                         <Button variant="ghost" size="sm" asChild>
                           <Link href={`/dashboard/articles/${article.id}`}>
                             <Eye className="h-4 w-4" />
+                            <span className="sr-only">View</span>
                           </Link>
                         </Button>
                         {article.status === "draft" && (
                           <Button variant="ghost" size="sm" asChild>
                             <Link href={`/dashboard/articles/${article.id}/edit`}>
                               <PenTool className="h-4 w-4" />
+                              <span className="sr-only">Edit</span>
                             </Link>
                           </Button>
                         )}
@@ -147,6 +162,7 @@ export default function ArticlesPage() {
                           className="text-destructive hover:text-destructive"
                         >
                           <Trash2 className="h-4 w-4" />
+                          <span className="sr-only">Delete</span>
                         </Button>
                       </div>
                     </TableCell>
