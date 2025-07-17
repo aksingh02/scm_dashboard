@@ -1,155 +1,198 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import type React from "react"
+
+import { useState, useEffect } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { useAuth } from "@/hooks/use-auth"
 import { supabase } from "@/lib/supabase"
-import { RichTextEditor } from "@/components/editor/rich-text-editor"
+import { useAuth } from "@/hooks/use-auth"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { X, ArrowLeft } from "lucide-react"
+import { RichTextEditor } from "@/components/editor/rich-text-editor"
+import { ArrowLeft, Save, Send, X } from "lucide-react"
+import Link from "next/link"
 import { toast } from "sonner"
 import type { Article } from "@/lib/types"
 
-export default function EditArticlePage() {
-  const { id } = useParams()
+// UUID validation function
+const isValidUUID = (str: string) => {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  return uuidRegex.test(str)
+}
+
+export default function ArticleEditPage() {
+  const params = useParams()
   const router = useRouter()
-  const { profile } = useAuth()
+  const { user, profile } = useAuth()
+  const [article, setArticle] = useState<Article | null>(null)
   const [loading, setLoading] = useState(true)
-  const [formData, setFormData] = useState({
-    title: "",
-    content: "",
-    excerpt: "",
-    featured_image_url: "",
-    meta_title: "",
-    meta_description: "",
-    tags: [] as string[],
-  })
+  const [saving, setSaving] = useState(false)
+
+  // Form state
+  const [title, setTitle] = useState("")
+  const [excerpt, setExcerpt] = useState("")
+  const [content, setContent] = useState("")
+  const [featuredImageUrl, setFeaturedImageUrl] = useState("")
+  const [tags, setTags] = useState<string[]>([])
   const [tagInput, setTagInput] = useState("")
-  const [originalArticle, setOriginalArticle] = useState<Article | null>(null)
+  const [metaTitle, setMetaTitle] = useState("")
+  const [metaDescription, setMetaDescription] = useState("")
 
   useEffect(() => {
-    if (id && profile) {
-      fetchArticle()
+    const articleId = params.id as string
+
+    // Validate UUID format
+    if (!isValidUUID(articleId)) {
+      toast.error("Invalid article ID")
+      router.push("/dashboard/articles")
+      return
     }
-  }, [id, profile])
 
-  const fetchArticle = async () => {
+    if (articleId && user) {
+      fetchArticle(articleId)
+    }
+  }, [params.id, user, router])
+
+  const fetchArticle = async (articleId: string) => {
     try {
-      const { data, error } = await supabase
-        .from("articles")
-        .select("*")
-        .eq("id", id as string)
-        .single()
+      const { data, error } = await supabase.from("articles").select("*").eq("id", articleId).single()
 
-      if (error) throw error
-
-      if (data && data.author_id === profile?.id && data.status === "draft") {
-        setOriginalArticle(data)
-        setFormData({
-          title: data.title,
-          content: data.content,
-          excerpt: data.excerpt || "",
-          featured_image_url: data.featured_image_url || "",
-          meta_title: data.meta_title || "",
-          meta_description: data.meta_description || "",
-          tags: data.tags || [],
-        })
-      } else {
-        toast.error("Article not found or not authorized for editing.")
+      if (error) {
+        if (error.code === "PGRST116") {
+          toast.error("Article not found")
+        } else {
+          throw error
+        }
         router.push("/dashboard/articles")
+        return
       }
-    } catch (error) {
-      console.error("Error fetching article for edit:", error)
-      toast.error("Failed to load article for editing.")
+
+      // Check if user can edit this article
+      if (data.author_id !== user?.id) {
+        toast.error("You don't have permission to edit this article")
+        router.push("/dashboard/articles")
+        return
+      }
+
+      // Check if article can be edited
+      if (data.status !== "draft" && data.status !== "rejected") {
+        toast.error("Only draft and rejected articles can be edited")
+        router.push(`/dashboard/articles/${articleId}`)
+        return
+      }
+
+      setArticle(data)
+
+      // Populate form fields
+      setTitle(data.title || "")
+      setExcerpt(data.excerpt || "")
+      setContent(data.content || "")
+      setFeaturedImageUrl(data.featured_image_url || "")
+      setTags(data.tags || [])
+      setMetaTitle(data.meta_title || "")
+      setMetaDescription(data.meta_description || "")
+    } catch (error: any) {
+      console.error("Error fetching article:", error)
+      toast.error("Failed to load article")
       router.push("/dashboard/articles")
     } finally {
       setLoading(false)
     }
   }
 
-  const generateSlug = (title: string) => {
-    return title
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, "")
-      .replace(/\s+/g, "-")
-      .trim()
-  }
-
-  const addTag = () => {
-    if (tagInput.trim() && !formData.tags.includes(tagInput.trim())) {
-      setFormData((prev) => ({
-        ...prev,
-        tags: [...prev.tags, tagInput.trim()],
-      }))
+  const handleAddTag = () => {
+    if (tagInput.trim() && !tags.includes(tagInput.trim())) {
+      setTags([...tags, tagInput.trim()])
       setTagInput("")
     }
   }
 
-  const removeTag = (tagToRemove: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      tags: prev.tags.filter((tag) => tag !== tagToRemove),
-    }))
+  const handleRemoveTag = (tagToRemove: string) => {
+    setTags(tags.filter((tag) => tag !== tagToRemove))
   }
 
-  const handleSubmit = async (status: "draft" | "pending_review") => {
-    if (!profile || !originalArticle) return
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault()
+      handleAddTag()
+    }
+  }
 
-    setLoading(true)
+  const handleSave = async (status: "draft" | "pending_review") => {
+    if (!article || !profile) return
+
+    if (!title.trim()) {
+      toast.error("Title is required")
+      return
+    }
+
+    if (!content.trim()) {
+      toast.error("Content is required")
+      return
+    }
+
+    setSaving(true)
     try {
-      const slug = generateSlug(formData.title)
-
       const { error } = await supabase
         .from("articles")
         .update({
-          title: formData.title,
-          slug,
-          content: formData.content,
-          excerpt: formData.excerpt,
-          featured_image_url: formData.featured_image_url || null,
+          title: title.trim(),
+          excerpt: excerpt.trim() || null,
+          content: content.trim(),
+          featured_image_url: featuredImageUrl.trim() || null,
+          tags: tags.length > 0 ? tags : null,
+          meta_title: metaTitle.trim() || null,
+          meta_description: metaDescription.trim() || null,
           status,
-          tags: formData.tags,
-          meta_title: formData.meta_title || null,
-          meta_description: formData.meta_description || null,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", originalArticle.id)
+        .eq("id", article.id)
 
       if (error) throw error
 
       // Log activity
+      const action = status === "draft" ? "article_updated" : "article_submitted"
       await supabase.rpc("log_activity", {
         p_user_id: profile.id,
-        p_action: status === "draft" ? "article_updated_draft" : "article_resubmitted",
+        p_action: action,
         p_resource_type: "article",
-        p_resource_id: originalArticle.id,
-        p_details: { title: formData.title },
+        p_resource_id: article.id,
+        p_details: { title: title.trim() },
       })
 
-      toast.success(status === "draft" ? "Article draft updated" : "Article resubmitted for review")
-
+      const message = status === "draft" ? "Article saved as draft" : "Article submitted for review"
+      toast.success(message)
       router.push("/dashboard/articles")
-    } catch (error) {
-      console.error("Error updating article:", error)
-      toast.error("Failed to update article")
+    } catch (error: any) {
+      console.error("Error saving article:", error)
+      toast.error("Failed to save article")
     } finally {
-      setLoading(false)
+      setSaving(false)
     }
   }
 
   if (loading) {
-    return <div className="flex justify-center items-center h-64">Loading article for editing...</div>
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="h-8 w-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
   }
 
-  if (!originalArticle) {
+  if (!article) {
     return (
-      <div className="flex justify-center items-center h-64 text-muted-foreground">
-        Article not found or unauthorized for editing.
+      <div className="text-center py-8">
+        <p className="text-muted-foreground">Article not found or cannot be edited</p>
+        <Button asChild className="mt-4">
+          <Link href="/dashboard/articles">
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Articles
+          </Link>
+        </Button>
       </div>
     )
   }
@@ -157,17 +200,28 @@ export default function EditArticlePage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Edit Article</h1>
-          <p className="text-muted-foreground">Modify your article content and settings</p>
+        <div className="flex items-center gap-4">
+          <Button variant="outline" asChild>
+            <Link href="/dashboard/articles">
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to Articles
+            </Link>
+          </Button>
+          <h1 className="text-2xl font-bold">Edit Article</h1>
         </div>
-        <Button variant="outline" onClick={() => router.back()}>
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back to Article
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => handleSave("draft")} disabled={saving}>
+            <Save className="h-4 w-4 mr-2" />
+            Save Draft
+          </Button>
+          <Button onClick={() => handleSave("pending_review")} disabled={saving}>
+            <Send className="h-4 w-4 mr-2" />
+            Submit for Review
+          </Button>
+        </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
           <Card>
             <CardHeader>
@@ -175,12 +229,13 @@ export default function EditArticlePage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <Label htmlFor="title">Title</Label>
+                <Label htmlFor="title">Title *</Label>
                 <Input
                   id="title"
-                  value={formData.title}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, title: e.target.value }))}
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
                   placeholder="Enter article title..."
+                  className="mt-1"
                 />
               </div>
 
@@ -188,20 +243,23 @@ export default function EditArticlePage() {
                 <Label htmlFor="excerpt">Excerpt</Label>
                 <Textarea
                   id="excerpt"
-                  value={formData.excerpt}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, excerpt: e.target.value }))}
+                  value={excerpt}
+                  onChange={(e) => setExcerpt(e.target.value)}
                   placeholder="Brief description of the article..."
                   rows={3}
+                  className="mt-1"
                 />
               </div>
 
               <div>
-                <Label>Content</Label>
-                <RichTextEditor
-                  content={formData.content}
-                  onChange={(content) => setFormData((prev) => ({ ...prev, content }))}
-                  placeholder="Start writing your article..."
-                />
+                <Label htmlFor="content">Content *</Label>
+                <div className="mt-1">
+                  <RichTextEditor
+                    content={content}
+                    onChange={setContent}
+                    placeholder="Write your article content here..."
+                  />
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -214,36 +272,48 @@ export default function EditArticlePage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <Label htmlFor="featured_image">Featured Image URL</Label>
+                <Label htmlFor="featured-image">Featured Image URL</Label>
                 <Input
-                  id="featured_image"
-                  value={formData.featured_image_url}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, featured_image_url: e.target.value }))}
+                  id="featured-image"
+                  value={featuredImageUrl}
+                  onChange={(e) => setFeaturedImageUrl(e.target.value)}
                   placeholder="https://example.com/image.jpg"
+                  className="mt-1"
                 />
               </div>
 
               <div>
                 <Label htmlFor="tags">Tags</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="tags"
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    placeholder="Add a tag..."
-                    onKeyPress={(e) => e.key === "Enter" && (e.preventDefault(), addTag())}
-                  />
-                  <Button type="button" onClick={addTag} size="sm">
-                    Add
-                  </Button>
-                </div>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {formData.tags.map((tag) => (
-                    <Badge key={tag} variant="secondary" className="flex items-center gap-1">
-                      {tag}
-                      <X className="h-3 w-3 cursor-pointer" onClick={() => removeTag(tag)} />
-                    </Badge>
-                  ))}
+                <div className="mt-1 space-y-2">
+                  <div className="flex gap-2">
+                    <Input
+                      id="tags"
+                      value={tagInput}
+                      onChange={(e) => setTagInput(e.target.value)}
+                      onKeyPress={handleKeyPress}
+                      placeholder="Add a tag..."
+                      className="flex-1"
+                    />
+                    <Button type="button" onClick={handleAddTag} size="sm">
+                      Add
+                    </Button>
+                  </div>
+                  {tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {tags.map((tag, index) => (
+                        <Badge key={index} variant="secondary" className="text-xs">
+                          {tag}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTag(tag)}
+                            className="ml-1 hover:text-destructive"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </CardContent>
@@ -255,39 +325,29 @@ export default function EditArticlePage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <Label htmlFor="meta_title">Meta Title</Label>
+                <Label htmlFor="meta-title">Meta Title</Label>
                 <Input
-                  id="meta_title"
-                  value={formData.meta_title}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, meta_title: e.target.value }))}
-                  placeholder="SEO title..."
+                  id="meta-title"
+                  value={metaTitle}
+                  onChange={(e) => setMetaTitle(e.target.value)}
+                  placeholder="SEO title for search engines..."
+                  className="mt-1"
                 />
               </div>
 
               <div>
-                <Label htmlFor="meta_description">Meta Description</Label>
+                <Label htmlFor="meta-description">Meta Description</Label>
                 <Textarea
-                  id="meta_description"
-                  value={formData.meta_description}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, meta_description: e.target.value }))}
-                  placeholder="SEO description..."
+                  id="meta-description"
+                  value={metaDescription}
+                  onChange={(e) => setMetaDescription(e.target.value)}
+                  placeholder="SEO description for search engines..."
                   rows={3}
+                  className="mt-1"
                 />
               </div>
             </CardContent>
           </Card>
-
-          <div className="flex flex-col gap-2">
-            <Button
-              onClick={() => handleSubmit("pending_review")}
-              disabled={loading || !formData.title || !formData.content}
-            >
-              Resubmit for Review
-            </Button>
-            <Button variant="outline" onClick={() => handleSubmit("draft")} disabled={loading || !formData.title}>
-              Save Draft Changes
-            </Button>
-          </div>
         </div>
       </div>
     </div>
